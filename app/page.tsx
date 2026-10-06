@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { AlertTriangle, BarChart3, Check, ChevronRight, FileText, Globe2, History, LocateFixed, LockKeyhole, LogOut, Menu, Moon, ScanLine, ShieldCheck, UserRound, X } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
@@ -12,18 +13,15 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
-  async function submit(event: React.FormEvent) { 
+  async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (!employeeId || !pin) {
       setError("Veuillez remplir tous les champs")
       return
     }
-
     setLoading(true)
     setError("")
-
     try {
-      // Query employees table with employee_id and pin_code
       const { data, error: loginError } = await supabase
         .from('employees')
         .select('*')
@@ -33,12 +31,11 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
 
       if (loginError || !data) {
         setError("Identifiant ou code PIN incorrect")
-        setLoading(false)
         return
       }
 
-      // Update presence to online
-      await supabase
+      // Update presence to online — log error but don't block login
+      const { error: presenceError } = await supabase
         .from('employee_presence')
         .upsert({
           employee_id: data.id,
@@ -46,8 +43,8 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
           status: 'online',
           last_seen: new Date().toISOString(),
         }, { onConflict: 'employee_id' })
+      if (presenceError) console.error('Presence update error:', presenceError)
 
-      // Store in localStorage
       localStorage.setItem('q_control_user', JSON.stringify(data))
       onLogin(data)
     } catch (err: any) {
@@ -71,11 +68,11 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
           <label htmlFor="employeeId">Identifiant</label>
           <div className="input-wrap">
             <UserRound size={18} />
-            <input 
-              id="employeeId" 
-              value={employeeId} 
-              onChange={(e) => setEmployeeId(e.target.value)} 
-              placeholder="Votre identifiant" 
+            <input
+              id="employeeId"
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              placeholder="Votre identifiant"
               autoComplete="username"
               disabled={loading}
             />
@@ -83,12 +80,12 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
           <label htmlFor="pin">Code PIN</label>
           <div className="input-wrap">
             <LockKeyhole size={18} />
-            <input 
-              id="pin" 
-              type="password" 
-              value={pin} 
-              onChange={(e) => setPin(e.target.value)} 
-              placeholder="Votre code PIN" 
+            <input
+              id="pin"
+              type="password"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              placeholder="Votre code PIN"
               autoComplete="current-password"
               disabled={loading}
             />
@@ -105,74 +102,98 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
 }
 
 function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
+  const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("Q-Control")
   const [night, setNight] = useState(false)
   const [message, setMessage] = useState("")
-  
-  const notify = (text: string) => { 
+
+  const notify = (text: string) => {
     setMessage(text)
-    window.setTimeout(() => setMessage(""), 2200) 
+    window.setTimeout(() => setMessage(""), 2200)
   }
 
   const handleSOS = async () => {
     try {
+      const sendSOS = async (lat: number | null, lng: number | null) => {
+        const sosData = {
+          employee_id: user.id,
+          account_id: user.account_id || null,
+          latitude: lat,
+          longitude: lng,
+          timestamp: new Date().toISOString(),
+          status: 'Active',
+          guard_name: user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Unknown Guard',
+          guard_phone: user.phone_number || null,
+        }
+        console.log('🚨 Sending SOS:', sosData)
+        const { error: sosError } = await supabase.from('sos_alerts').insert(sosData)
+        if (sosError) {
+          console.error('SOS insert error:', sosError)
+          notify("❌ Erreur SOS — réessayez")
+        } else {
+          notify("🚨 Alerte SOS envoyée!")
+        }
+      }
+
       if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(async (position) => {
-          const sosData = {
-            employee_id: user.id,
-            account_id: user.account_id || null,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            timestamp: new Date().toISOString(),
-            status: 'Active',  // ✅ SET STATUS AS ACTIVE!
-            guard_name: user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Unknown Guard',
-            guard_phone: user.phone_number || null,
-          }
-          
-          console.log('🚨 Sending SOS:', sosData)
-          
-          const { error: sosError } = await supabase.from('sos_alerts').insert(sosData)
-          
-          if (sosError) {
-            console.error('SOS insert error:', sosError)
-            notify("Erreur SOS")
-          } else {
-            notify("🚨 Alerte SOS envoyée!")
-          }
-        }, (error) => {
-          console.error('Geolocation error:', error)
-          notify("Erreur de géolocalisation")
-        })
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            await sendSOS(position.coords.latitude, position.coords.longitude)
+          },
+          async (err) => {
+            // GPS unavailable — send SOS anyway without coordinates
+            console.warn('Geolocation error:', err.message)
+            notify("⚠️ SOS envoyé sans position GPS")
+            await sendSOS(null, null)
+          },
+          { timeout: 8000, maximumAge: 30000 }
+        )
       } else {
-        notify("Géolocalisation non disponible")
+        await sendSOS(null, null)
       }
     } catch (error) {
       console.error('SOS error:', error)
-      notify("Erreur SOS")
+      notify("❌ Erreur SOS")
     }
   }
 
   const handleCheckpoint = async () => {
     try {
       if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(async (position) => {
-          await supabase.from('employee_location_tracking').upsert({
-            employee_id: user.id,
-            account_id: user.account_id,
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            is_active: true,
-            timestamp: new Date().toISOString(),
-          }, { onConflict: 'employee_id' })
-          notify("Checkpoint enregistré")
-        })
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            const now = new Date().toISOString()
+            const { error: cpError } = await supabase
+              .from('employee_location_tracking')
+              .upsert({
+                employee_id: user.id,
+                account_id: user.account_id,
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                is_active: true,
+                timestamp: now,
+                last_updated: now,
+              }, { onConflict: 'employee_id' })
+            if (cpError) {
+              console.error('Checkpoint error:', cpError)
+              notify("❌ Erreur checkpoint")
+            } else {
+              notify("📍 Checkpoint enregistré")
+            }
+          },
+          (err) => {
+            console.error('Checkpoint geolocation error:', err)
+            notify("⚠️ Position GPS non disponible")
+          },
+          { timeout: 8000 }
+        )
       } else {
         notify("Géolocalisation non disponible")
       }
     } catch (error) {
       console.error('Checkpoint error:', error)
-      notify("Erreur checkpoint")
+      notify("❌ Erreur checkpoint")
     }
   }
 
@@ -182,7 +203,6 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
         status: 'offline',
         last_seen: new Date().toISOString(),
       }).eq('employee_id', user.id)
-      
       localStorage.removeItem('q_control_user')
       onLogout()
     } catch (error) {
@@ -192,9 +212,9 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
   }
 
   const nav = [
-    { label: "Q-Control", icon: ShieldCheck, action: () => {} }, 
-    { label: "Q-Patrol", icon: BarChart3, action: () => notify("Q-Patrol") }, 
-    { label: "Instructions", icon: FileText, action: () => { window.location.href = '/instructions' } }
+    { label: "Q-Control", icon: ShieldCheck, action: () => {} },
+    { label: "Q-Patrol", icon: BarChart3, action: () => router.push('/instructions') },
+    { label: "Instructions", icon: FileText, action: () => router.push('/instructions') },
   ]
 
   const userName = user?.full_name || `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Agent'
@@ -202,7 +222,7 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
   const profilePhoto = user?.photo || null
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${night ? ' night' : ''}`}>
       <header className="topbar">
         <div className="profile">
           <div className="avatar">
@@ -226,6 +246,7 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
           </button>
         </div>
       </header>
+
       <section className="dashboard-content">
         <div className="brand-orbit">
           <div className="orbit orbit-one" />
@@ -237,7 +258,7 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
         <h1>Q-Control Mobile</h1>
         <p className="tagline">Stay Safe, Stay Connected</p>
         <div className="action-stack">
-          <button className="action-button scan" onClick={() => window.location.href = '/scan'}>
+          <button className="action-button scan" onClick={() => router.push('/scan')}>
             <ScanLine size={22} />
             <span>SCAN</span>
           </button>
@@ -247,26 +268,26 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
           </button>
         </div>
       </section>
+
       <nav className="bottom-nav" aria-label="Navigation principale">
         {nav.map(({ label, icon: Icon, action }) => (
-          <button 
-            key={label} 
-            className={activeTab === label ? "active" : ""} 
-            onClick={() => { 
-              setActiveTab(label)
-              action()
-            }}
+          <button
+            key={label}
+            className={activeTab === label ? "active" : ""}
+            onClick={() => { setActiveTab(label); action() }}
           >
             <Icon size={19} />
             <span>{label}</span>
           </button>
         ))}
       </nav>
+
       {message && (
         <div className="toast" role="status">
           <Check size={16} />{message}
         </div>
       )}
+
       {menuOpen && (
         <>
           <button className="drawer-overlay" aria-label="Fermer le menu" onClick={() => setMenuOpen(false)} />
@@ -290,25 +311,23 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
               </button>
             </div>
             <div className="drawer-items">
-              <button onClick={() => { setMenuOpen(false); window.location.href = '/rapport' }}>
+              <button onClick={() => { setMenuOpen(false); router.push('/rapport') }}>
                 <FileText />Rapport
               </button>
-              <button onClick={() => notify("Historique ouvert")}>
-                <History />Historique
+              <button onClick={() => { setMenuOpen(false); router.push('/scan') }}>
+                <History />Historique des scans
               </button>
-              <button onClick={() => notify("Checkpoint ouvert")}>
+              <button onClick={() => { setMenuOpen(false); handleCheckpoint() }}>
                 <LocateFixed />Checkpoint
               </button>
               <div className="drawer-row">
-                <span>
-                  <Moon />Mode Nuit
-                </span>
+                <span><Moon />Mode Nuit</span>
                 <button className={`switch ${night ? "on" : ""}`} onClick={() => setNight(!night)} aria-label="Activer le mode nuit">
                   <span />
                 </button>
               </div>
-              <button onClick={() => notify("Langue : Français")}>
-                <Globe2 />Langue <small>Français</small><ChevronRight />
+              <button onClick={() => { setMenuOpen(false); router.push('/instructions') }}>
+                <Globe2 />Instructions <ChevronRight />
               </button>
             </div>
             <button className="logout" onClick={handleLogout}>
@@ -321,23 +340,26 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
   )
 }
 
-export default function Home() { 
+export default function Home() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
-  // Check localStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedUser = localStorage.getItem('q_control_user')
       if (savedUser) {
-        setUser(JSON.parse(savedUser))
+        try { setUser(JSON.parse(savedUser)) } catch { localStorage.removeItem('q_control_user') }
       }
       setLoading(false)
     }
   }, [])
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>Loading...</div>
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <div style={{ textAlign: 'center', color: '#062c4d' }}>Chargement...</div>
+      </div>
+    )
   }
 
   return user ? <Dashboard user={user} onLogout={() => setUser(null)} /> : <Login onLogin={setUser} />
