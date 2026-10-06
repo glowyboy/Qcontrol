@@ -190,7 +190,9 @@ function ScanPageInner() {
         }).eq('id', d.id)
 
         const guardName = user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Agent'
+        const scanId = `scan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         const { error } = await supabase.from('patrol_scans').insert({
+          id: scanId,
           patrol_point_id: d.id,
           patrol_point_name: d.point_name,
           scanned_by_id: user.id,
@@ -220,9 +222,10 @@ function ScanPageInner() {
       }
 
       const logType = actionType === 'enter' ? 'Entry' : 'Exit'
+      const logId = `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
       const { error } = await supabase.from('access_logs').insert({
-        // Primary fields matching real schema
+        id: logId,
         entity_id: employeeId || vehicleId,
         entity_type: found.kind === 'vehicle' ? 'Vehicle' : found.kind === 'employee' ? 'Employee' : 'Visitor',
         entity_name: employeeName || vehiclePlate || 'Unknown',
@@ -234,7 +237,6 @@ function ScanPageInner() {
         scanned_by: scannedBy,
         notes: dest ? `Destination: ${dest}` : null,
         account_id: accountId,
-        // Legacy fields also present in the table
         employee_id: employeeId,
         employee_name: employeeName,
         scan_type: logType,
