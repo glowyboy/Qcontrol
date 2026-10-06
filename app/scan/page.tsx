@@ -185,16 +185,19 @@ function ScanPageInner() {
 
       if (found.kind === 'patrol') {
         const now = new Date().toISOString()
-        await supabase.from('patrol_points').update({ last_scanned_at: now, last_checked_by: user.id, status: 'On Time', updated_at: now }).eq('id', d.id)
+        await supabase.from('patrol_points').update({
+          last_scanned_at: now, last_checked_by: user.id, status: 'On Time', updated_at: now
+        }).eq('id', d.id)
+
+        const guardName = user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Agent'
         const { error } = await supabase.from('patrol_scans').insert({
           patrol_point_id: d.id,
-          scanned_by_id: user.id,
-          scanned_by_name: user.full_name || 'Agent',
-          scan_timestamp: now,
-          account_id: d.account_id || user.account_id || null,
-          notes: dest || 'Scanné via Q-Control Mobile',
+          point_name: d.point_name,
+          scanned_by: guardName,
+          scan_time: now,
+          status: 'On Time',
         })
-        if (error) { console.error(error); setSuccessMsg('❌ Erreur enregistrement') }
+        if (error) { console.error('patrol_scans error:', error); setSuccessMsg('❌ Erreur: ' + error.message) }
         else setSuccessMsg(`✓ Ronde enregistrée: "${d.point_name}"`)
         return
       }
@@ -210,29 +213,36 @@ function ScanPageInner() {
         vehicleId = d.id; vehicleQr = d.qr_code; vehiclePlate = d.license_plate
       }
 
+      // Build insert using the actual access_logs columns from the DB schema
       const logData: any = {
-        account_id: accountId,
         employee_id: employeeId,
-        employee_name: employeeName,
         vehicle_id: vehicleId,
+        scan_type: actionType === 'enter' ? 'Entry' : 'Exit',
+        entry_time: actionType === 'enter' ? new Date().toISOString() : null,
+        exit_time: actionType === 'exit' ? new Date().toISOString() : null,
+      }
+
+      // Try inserting with extra columns — gracefully fall back if columns don't exist
+      const extendedLogData = {
+        ...logData,
+        account_id: accountId,
+        employee_name: employeeName,
         vehicle_qr: vehicleQr,
         vehicle_plate: vehiclePlate,
-        scan_type: scanType,
         scan_timestamp: new Date().toISOString(),
-        location_lat: null,
-        location_lng: null,
         destination: dest || null,
       }
 
-      const { error } = await supabase.from('access_logs').insert(logData)
+      let { error } = await supabase.from('access_logs').insert(extendedLogData)
+
       if (error) {
-        if (error.code === '42703') {
-          // destination column doesn't exist — retry without it
-          delete logData.destination
+        console.error('access_logs extended error:', error.message, error.code)
+        // Fall back to minimal columns if unknown columns caused error
+        if (error.code === '42703' || error.code === 'PGRST204') {
           const { error: e2 } = await supabase.from('access_logs').insert(logData)
-          if (e2) { console.error(e2); setSuccessMsg('❌ Erreur enregistrement'); return }
+          if (e2) { console.error('access_logs minimal error:', e2.message); setSuccessMsg('❌ Erreur: ' + e2.message); return }
         } else {
-          console.error(error); setSuccessMsg('❌ Erreur enregistrement'); return
+          setSuccessMsg('❌ Erreur: ' + error.message); return
         }
       }
       setSuccessMsg(actionType === 'enter' ? '✓ Entrée enregistrée!' : '✓ Sortie enregistrée!')
