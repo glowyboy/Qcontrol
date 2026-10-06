@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // 'export' only used in CI build — dev mode runs normally
+  ...(process.env.NODE_ENV === 'production' ? { output: 'export' } : {}),
   typescript: {
     ignoreBuildErrors: true,
   },
