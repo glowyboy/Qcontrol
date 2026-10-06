@@ -47,6 +47,16 @@ function Login({ onLogin }: { onLogin: (user: any) => void }) {
 
       localStorage.setItem('q_control_user', JSON.stringify(data))
       onLogin(data)
+
+      // Request geolocation permission immediately after login
+      // so the popup appears right away instead of on first SOS/checkpoint
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          () => {}, // success — permission granted, we don't need the position here
+          () => {}, // denied — that's ok, SOS will still work without coords
+          { timeout: 5000 }
+        )
+      }
     } catch (err: any) {
       console.error('Login error:', err)
       setError('Erreur de connexion')
@@ -213,7 +223,7 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
 
   const nav = [
     { label: "Q-Control", icon: ShieldCheck, action: () => {} },
-    { label: "Q-Patrol", icon: BarChart3, action: () => router.push('/instructions') },
+    { label: "Q-Patrol", icon: BarChart3, action: () => router.push('/scan?mode=patrol') },
     { label: "Instructions", icon: FileText, action: () => router.push('/instructions') },
   ]
 
@@ -258,7 +268,7 @@ function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
         <h1>Q-Control Mobile</h1>
         <p className="tagline">Stay Safe, Stay Connected</p>
         <div className="action-stack">
-          <button className="action-button scan" onClick={() => router.push('/scan')}>
+          <button className="action-button scan" onClick={() => router.push('/scan?mode=access')}>
             <ScanLine size={22} />
             <span>SCAN</span>
           </button>
