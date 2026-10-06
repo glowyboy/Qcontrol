@@ -192,10 +192,14 @@ function ScanPageInner() {
         const guardName = user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Agent'
         const { error } = await supabase.from('patrol_scans').insert({
           patrol_point_id: d.id,
-          point_name: d.point_name,
-          scanned_by: guardName,
-          scan_time: now,
-          status: 'On Time',
+          patrol_point_name: d.point_name,
+          scanned_by_id: user.id,
+          scanned_by_name: guardName,
+          scan_timestamp: now,
+          account_id: d.account_id || user.account_id || null,
+          notes: dest || 'Scanné via Q-Control Mobile',
+          location_lat: null,
+          location_lng: null,
         })
         if (error) { console.error('patrol_scans error:', error); setSuccessMsg('❌ Erreur: ' + error.message) }
         else setSuccessMsg(`✓ Ronde enregistrée: "${d.point_name}"`)
@@ -204,6 +208,7 @@ function ScanPageInner() {
 
       let employeeId = null, employeeName = 'Unknown', vehicleId = null, vehicleQr = null, vehiclePlate = null
       let accountId = d.account_id || user.account_id || null
+      const scannedBy = user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Agent'
 
       if (found.kind === 'employee') {
         employeeId = d.id; employeeName = d.name
@@ -211,40 +216,34 @@ function ScanPageInner() {
         employeeId = d.id; employeeName = d.name
       } else if (found.kind === 'vehicle') {
         vehicleId = d.id; vehicleQr = d.qr_code; vehiclePlate = d.license_plate
+        accountId = d.account_id || user.account_id || null
       }
 
-      // Build insert using the actual access_logs columns from the DB schema
-      const logData: any = {
-        employee_id: employeeId,
+      const logType = actionType === 'enter' ? 'Entry' : 'Exit'
+
+      const { error } = await supabase.from('access_logs').insert({
+        // Primary fields matching real schema
+        entity_id: employeeId || vehicleId,
+        entity_type: found.kind === 'vehicle' ? 'Vehicle' : found.kind === 'employee' ? 'Employee' : 'Visitor',
+        entity_name: employeeName || vehiclePlate || 'Unknown',
+        log_type: logType,
+        gate: 'Mobile App',
         vehicle_id: vehicleId,
-        scan_type: actionType === 'enter' ? 'Entry' : 'Exit',
-        entry_time: actionType === 'enter' ? new Date().toISOString() : null,
-        exit_time: actionType === 'exit' ? new Date().toISOString() : null,
-      }
-
-      // Try inserting with extra columns — gracefully fall back if columns don't exist
-      const extendedLogData = {
-        ...logData,
-        account_id: accountId,
-        employee_name: employeeName,
-        vehicle_qr: vehicleQr,
         vehicle_plate: vehiclePlate,
+        vehicle_qr: vehicleQr,
+        scanned_by: scannedBy,
+        notes: dest ? `Destination: ${dest}` : null,
+        account_id: accountId,
+        // Legacy fields also present in the table
+        employee_id: employeeId,
+        employee_name: employeeName,
+        scan_type: logType,
         scan_timestamp: new Date().toISOString(),
-        destination: dest || null,
-      }
+        location_lat: null,
+        location_lng: null,
+      })
 
-      let { error } = await supabase.from('access_logs').insert(extendedLogData)
-
-      if (error) {
-        console.error('access_logs extended error:', error.message, error.code)
-        // Fall back to minimal columns if unknown columns caused error
-        if (error.code === '42703' || error.code === 'PGRST204') {
-          const { error: e2 } = await supabase.from('access_logs').insert(logData)
-          if (e2) { console.error('access_logs minimal error:', e2.message); setSuccessMsg('❌ Erreur: ' + e2.message); return }
-        } else {
-          setSuccessMsg('❌ Erreur: ' + error.message); return
-        }
-      }
+      if (error) { console.error('access_logs error:', error); setSuccessMsg('❌ Erreur: ' + error.message); return }
       setSuccessMsg(actionType === 'enter' ? '✓ Entrée enregistrée!' : '✓ Sortie enregistrée!')
     } finally {
       setSaving(false)
