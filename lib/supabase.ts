@@ -1,26 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Lazy singleton — created on first use, not at module load
-// This prevents build-time crashes during Next.js static export
-let _supabase: ReturnType<typeof createClient> | null = null;
+// Supabase public config — anon key is safe to be in client code
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  'https://lxkovilybzcbgugqyjaa.supabase.co';
 
-function getSupabase() {
-  if (_supabase) return _supabase;
+const supabaseAnonKey =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4a292aWx5YnpjYmd1Z3F5amFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3ODg5OTgsImV4cCI6MjEwMDM2NDk5OH0.FaP1uik4X-37o_FUqdiEIFcb2U_AHf3HRaEKONMcT7M';
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Missing Supabase environment variables');
-  }
-
-  _supabase = createClient(supabaseUrl, supabaseAnonKey);
-  return _supabase;
-}
-
-// Proxy so existing code using `supabase.from(...)` keeps working unchanged
-export const supabase = new Proxy({} as ReturnType<typeof createClient>, {
-  get(_target, prop) {
-    return (getSupabase() as any)[prop];
-  },
-});
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
