@@ -1,0 +1,22 @@
+{
+  "name": "Q-Control Mobile",
+  "short_name": "Q-Control",
+  "description": "Espace sécurisé de contrôle mobile pour les agents Q-Control",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#edf2f3",
+  "theme_color": "#062c4d",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/q-controle-logo.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/q-controle-logo.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}
